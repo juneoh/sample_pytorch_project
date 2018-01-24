@@ -1,0 +1,8 @@
+__pycache__
+*.pyc
+*.swp
+*.pth.tar
+.*
+checkpoints
+data
+logs
