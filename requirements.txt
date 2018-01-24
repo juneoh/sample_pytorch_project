@@ -1,2 +1,1 @@
-torch>=0.3
 tqdm
