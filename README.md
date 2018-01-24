@@ -38,11 +38,11 @@ sudo docker build -t pytorch:v0.3.0 pytorch-v0.3.0
 sudo docker run --rm --runtime nvidia --ipc host --pid host -dit \
 -v $(pwd):/root --restart unless-stopped \
 -h $(hostname)-pytorch --name $(hostname)-pytorch
-pytorch:v0.3.0 bash -c 'pip install -r requirements.txt && ./run.py'
+pytorch:v0.3.0 bash -c 'pip install -r requirements.txt && python3 run.py'
 ```
 
 ## Help
 
 ```bash
-./run.py --help
+python3 run.py --help
 ```
