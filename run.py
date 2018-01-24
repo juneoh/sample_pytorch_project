@@ -15,7 +15,7 @@ import torchvision.models
 import torchvision.transforms
 import tqdm
 
-from model import Model
+from model_wrapper import ModelWrapper
 
 def parse_arguments():
     """Parse command line arguments.
@@ -150,7 +150,7 @@ def prepare_model(learning_rate, momentum, checkpoint_file):
                                 momentum=momentum)
 
     # Wrap model object and load checkpoint file if provided.
-    model = Model(resnet, loss_function, optimizer)
+    model = ModelWrapper(resnet, loss_function, optimizer)
     if checkpoint_file:
         model.load(checkpoint_file)
 

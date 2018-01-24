@@ -5,7 +5,7 @@ import numpy
 import torch
 import torch.autograd
 
-class Model:
+class ModelWrapper:
     """Wraps a PyTorch model to provide convenience functions.
 
     Args:
