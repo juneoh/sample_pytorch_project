@@ -3,6 +3,7 @@
 """
 import argparse
 import logging
+import logging.handlers
 import os
 import sys
 
@@ -16,22 +17,21 @@ import tqdm
 
 from model import Model
 
-def main():
-    """Train and validate ResNet-34 on Fashion MNIST dataset.
-    """
-    # Enable logging to STDOUT.
-    logging.basicConfig(format='%(asctime)s %(message)s',
-                        level=logging.INFO)
+def parse_arguments():
+    """Parse command line arguments.
 
-    # Parse arguments.
+    Returns:
+        argparse.Namespace: The parsed arguments object.
+    """
     parser = argparse.ArgumentParser(description=__doc__)
+
+    parser.add_argument('--val_ratio', type=float, default=0.3,
+                        help='The ratio of the validation set. (default: 0.3)')
     parser.add_argument('--batch_size', type=int, default=256,
                         help='The batch size to load the data. (default: 64)')
     parser.add_argument('--num_workers', type=int, default=4,
                         help=('The number of worker processes to use in '
                               'loading the dataset. (default: 4)'))
-    parser.add_argument('--val_ratio', type=float, default=0.3,
-                        help='The ratio of the validation set. (default: 0.3)')
     parser.add_argument('--num_epochs', type=int, default=30,
                         help=('The number of training epochs to run. (default:'
                               '30)'))
@@ -41,22 +41,53 @@ def main():
                         help='The momentum for SGD. (default: 0.9)')
     parser.add_argument('--checkpoint_file',
                         help='The path of the checkpoint file to load')
+
     args = parser.parse_args(sys.argv[1:])
 
-    # Fix random seed.  torch.manual_seed(0)
+    return args
 
-    # Create checkpoint directory.
+def prepare_logger():
+    """Prepare formatted logger to stream and file.
+
+    Returns:
+        logging.Logger: The logger object.
+    """
+    # Prepare log directory.
     try:
-        os.mkdir('checkpoints')
+        os.mkdir('logs')
     except FileExistsError:
         pass
 
-    logging.info('Preparing data..')
+    # Create logger and formatter.
+    logger = logging.getLogger(__name__)
+    logger.setLevel(logging.INFO)
+    formatter = logging.Formatter('%(asctime)s %(message)s')
 
-    # Download and load the dataset.
+    # Create and attach stream handler.
+    stream_handler = logging.StreamHandler()
+    stream_handler.setFormatter(formatter)
+    logger.addHandler(stream_handler)
+
+    # Create and attach file handler.
+    file_handler = logging.handlers.TimedRotatingFileHandler(
+        'logs/log.txt', when='d', encoding='utf-8')
+    file_handler.setFormatter(formatter)
+    logger.addHandler(file_handler)
+
+    return logger
+
+def prepare_data(val_ratio, batch_size, num_workers):
+    """Download Fashion MNIST dataset and prepare data loaders.
+
+    Returns:
+        tuple: A tuple of train, validation, and test data loaders.
+    """
+    # Define data preprocessing.
     transform = torchvision.transforms.Compose(
         [torchvision.transforms.ToTensor(),
          torchvision.transforms.Normalize((0.5, ), (0.5, ))])
+
+    # Download and load the dataset.
     train_dataset = torchvision.datasets.FashionMNIST(root='./data',
                                                       train=True,
                                                       download=True,
@@ -68,33 +99,45 @@ def main():
 
     # Create shuffled indices, and split into given ratio.
     random_indices = torch.randperm(len(train_dataset))
-    val_count = int(len(train_dataset) * args.val_ratio)
+    val_count = int(len(train_dataset) * val_ratio)
     train_indices = random_indices[val_count:]
     val_indices = random_indices[:val_count]
 
     # Create data loaders.
     train_loader = torch.utils.data.DataLoader(
         dataset=train_dataset,
-        batch_size=args.batch_size,
+        batch_size=batch_size,
         sampler=torch.utils.data.sampler.SubsetRandomSampler(train_indices),
-        num_workers=args.num_workers,
+        num_workers=num_workers,
         drop_last=True)
     val_loader = torch.utils.data.DataLoader(
         dataset=train_dataset,
-        batch_size=args.batch_size,
+        batch_size=batch_size,
         sampler=torch.utils.data.sampler.SubsetRandomSampler(val_indices),
-        num_workers=args.num_workers,
+        num_workers=num_workers,
         drop_last=False)
     test_loader = torch.utils.data.DataLoader(
         dataset=test_dataset,
-        batch_size=args.batch_size,
+        batch_size=batch_size,
         shuffle=False,
-        num_workers=args.num_workers,
+        num_workers=num_workers,
         drop_last=False)
 
-    logging.info('Loading model..')
+    return train_loader, val_loader, test_loader
 
-    # Prepare model.
+def prepare_model(learning_rate, momentum, checkpoint_file):
+    """Prepare a ResNet-34 model with CrossEntropyLoss and SGD.
+
+    Args:
+        learning_rate (float): The learning rate for SGD.
+        momentum (float): The momentum for SGD.
+        checkpoint_file (str or None): If not `None`, the path of the
+            checkpoint file to load.
+
+    Returns:
+        model.Model: The prepared model object.
+    """
+    # Load model.
     resnet = torchvision.models.resnet34()
     resnet.conv1 = torch.nn.Conv2d(1, 64, kernel_size=3, stride=1, padding=1,
                                    bias=False)
@@ -103,91 +146,115 @@ def main():
     # Prepare loss function and optimizer.
     loss_function = torch.nn.CrossEntropyLoss()
     optimizer = torch.optim.SGD(resnet.parameters(),
-                                lr=args.learning_rate,
-                                momentum=args.momentum)
+                                lr=learning_rate,
+                                momentum=momentum)
 
     # Wrap model object and load checkpoint file if provided.
     model = Model(resnet, loss_function, optimizer)
-    if args.checkpoint_file:
+    if checkpoint_file:
         model.load(checkpoint_file)
 
-    logging.info('Training start!')
+    return model
 
-    for epoch in range(args.num_epochs):
+def train(model, train_loader):
+    """Train the model for an epoch with a pretty progress bar.
 
-        # Create progress bar.
-        progress_bar = tqdm.tqdm(total=len(train_loader),
-                                 unit='batch',
-                                 desc='[train] batch loss: 0.000',
-                                 leave=False)
+    Args:
+        model (model.Model): The wrapped PyTorch model.
+        train_loader (torch.utils.data.DataLoader): The train data loader.
 
-        # Create an empty list to gather batch losses.
-        loss_list = []
+    Returns:
+        float: The mean training loss.
+    """
+    # Create progress bar.
+    progress_bar = tqdm.tqdm(total=len(train_loader),
+                             unit='batch',
+                             desc='[train] batch loss: 0.000',
+                             leave=False)
 
-        # Loop through training batches.
-        for i, (x, y) in enumerate(train_loader):
+    # Create an empty list to gather batch losses.
+    loss_list = []
 
-            # Forward and backward.
-            batch_loss = model.train_batch(x, y)
+    # Loop through training batches.
+    for i, (x, y) in enumerate(train_loader):
 
-            # Gather batch losses.
-            loss_list.append(batch_loss)
+        # Forward and backward.
+        batch_loss = model.train_batch(x, y)
 
-            # Update progress bar.
-            progress_bar.update(1)
-            progress_bar.set_description(
-                '[train] batch loss: {loss:.3f}'.format(loss=batch_loss[0]))
+        # Gather batch losses.
+        loss_list.append(batch_loss)
 
-        # Close progress bar.
-        progress_bar.close()
+        # Update progress bar.
+        progress_bar.update(1)
+        progress_bar.set_description(
+            '[train] batch loss: {loss:.3f}'.format(loss=batch_loss[0]))
 
-        # Create progress bar.
-        progress_bar = tqdm.tqdm(total=len(val_loader),
-                                 unit='batch',
-                                 desc='[validate] batch accuracy: 0.000',
-                                 leave=False)
+    # Close progress bar.
+    progress_bar.close()
 
-        # Create empty lists to gather true and inferred labels.
-        y_true_list = []
-        y_pred_list = []
+    # Calculate mean training loss.
+    mean_train_loss = torch.cat(loss_list).mean()
 
-        # Loop through validation batches.
-        for i, (x, y) in enumerate(val_loader):
+    return mean_train_loss
 
-            # Forward.
-            y_pred = model.infer_batch(x)
+def validate(model, val_loader):
+    """Validate the model with a pretty progress bar.
 
-            # Gather true and inferred labels.
-            y_true_list.append(y)
-            y_pred_list.append(y_pred)
+    Args:
+        model (model.Model): The wrapped PyTorch model.
+        train_loader (torch.utils.data.DataLoader): The train data loader.
+        epoch (int): The current epoch number.
 
-            # Update progress bar.
-            accuracy = (y == y_pred).sum() / len(y)
-            progress_bar.update(1)
-            progress_bar.set_description(
-                '[validate] batch accuracy: {accuracy:.3f}'.format(
-                    accuracy=accuracy))
+    Returns:
+        float: The overall validation accuracy.
+    """
+    # Create progress bar.
+    progress_bar = tqdm.tqdm(total=len(val_loader),
+                             unit='batch',
+                             desc='[validate] batch accuracy: 0.000',
+                             leave=False)
 
-        # Calculate statistics.
-        mean_training_loss = torch.cat(loss_list).mean()
-        val_true = torch.cat(y_true_list)
-        val_pred = torch.cat(y_pred_list)
-        val_accuracy = (val_true == val_pred).sum() / len(val_true)
+    # Create empty lists to gather true and inferred labels.
+    y_true_list = []
+    y_pred_list = []
 
-        # Close progress bar and log statistics.
-        progress_bar.close()
-        message = ('[epoch {epoch}] mean training loss: {loss:.3f}, '
-                   'validation accuracy: {accuracy:.3f}')
-        message = message.format(epoch=epoch+1,
-                                 loss=mean_training_loss,
-                                 accuracy=val_accuracy)
-        logging.info(message)
+    # Loop through validation batches.
+    for i, (x, y) in enumerate(val_loader):
 
-        # Save checkpoint.
-        model.save('checkpoints/epoch{epoch}.pth'.format(epoch=epoch))
+        # Forward.
+        y_pred = model.infer_batch(x)
 
-    logging.info('Testing start!')
+        # Gather true and inferred labels.
+        y_true_list.append(y)
+        y_pred_list.append(y_pred)
 
+        # Update progress bar.
+        accuracy = (y == y_pred).sum() / len(y)
+        progress_bar.update(1)
+        progress_bar.set_description(
+            '[validate] batch accuracy: {accuracy:.3f}'.format(
+                accuracy=accuracy))
+
+    # Close progress bar.
+    progress_bar.close()
+
+    # Calculate validation accuracy.
+    val_true = torch.cat(y_true_list)
+    val_pred = torch.cat(y_pred_list)
+    val_accuracy = (val_true == val_pred).sum() / len(val_true)
+
+    return val_accuracy
+
+def test(model, test_loader):
+    """Validate the model with a pretty progress bar.
+
+    Args:
+        model (model.Model): The wrapped PyTorch model.
+        train_loader (torch.utils.data.DataLoader): The train data loader.
+
+    Returns:
+        float: The overall test accuracy.
+    """
     # Create empty lists to gather true and inferred labels.
     y_true_list = []
     y_pred_list = []
@@ -214,16 +281,80 @@ def main():
         progress_bar.set_description(
             '[test] batch accuracy: {accuracy:.3f}'.format(accuracy=accuracy))
 
-    # Calculate statistics.
+    # Close progress bar.
+    progress_bar.close()
+
+    # Calculate test accuracy.
     test_true = torch.cat(y_true_list)
     test_pred = torch.cat(y_pred_list)
     test_accuracy = (test_true == test_pred).sum() / len(test_true)
 
-    # Close progress bar and log statistics.
-    progress_bar.close()
+    return test_accuracy
+
+def main():
+    """Train and validate ResNet-34 on Fashion MNIST dataset.
+    """
+    # Fix random seed.
+
+    torch.manual_seed(0)
+
+    # Prepare checkpoint directory.
+
+    try:
+        os.mkdir('checkpoints')
+    except FileExistsError:
+        pass
+
+    # Make preparations.
+
+    args = parse_arguments()
+    logger = prepare_logger()
+    train_loader, val_loader, test_loader = prepare_data(args.val_ratio,
+                                                         args.batch_size,
+                                                         args.num_workers)
+    model = prepare_model(args.learning_rate, args.momentum, args.checkpoint_file)
+
+    # Loop train-validate-save-log cycle per epoch.
+
+    logger.info(' '.join(sys.argv))
+
+    for epoch in range(args.num_epochs):
+
+        # Train.
+        mean_train_loss = train(model, train_loader)
+
+        # Validate.
+        val_accuracy = validate(model, val_loader)
+
+        # Save.
+        model.save('checkpoints/epoch{epoch}.pth'.format(epoch=epoch))
+
+        # Log.
+        message = ('[epoch {epoch}] mean training loss: {loss:.3f}, '
+                   'validation accuracy: {accuracy:.3f}')
+        message = message.format(epoch=epoch+1,
+                                 loss=mean_train_loss,
+                                 accuracy=val_accuracy)
+        logger.info(message)
+
+    # Test the resulting model, log results, and save.
+
+    # Test.
+    test_accuracy = test(model, test_loader)
+
+    # Log.
     message = ('Final test accuracy: {accuracy:.3f}')
     message = message.format(accuracy=test_accuracy)
-    logging.info(message)
+    logger.info(message)
+
+    # Save.
+    num = 1
+    result_format = 'checkpoints/result{num}.pth'
+    while os.path.isfile(result_format.format(num=num)):
+        num += 1
+    model.save(result_format.format(num=num))
+    message = 'Final model saved as: checkpoints/result{num}.pth'
+    logger.info(message.format(num=num))
 
 if __name__ == '__main__':
     main()
