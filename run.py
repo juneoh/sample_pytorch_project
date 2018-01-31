@@ -93,7 +93,7 @@ def prepare_data(val_ratio, batch_size, num_workers):
                                                       download=True,
                                                       transform=transform)
     test_dataset = torchvision.datasets.FashionMNIST(root='./data',
-                                                     train=True,
+                                                     train=False,
                                                      download=True,
                                                      transform=transform)
 
