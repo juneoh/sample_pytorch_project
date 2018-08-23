@@ -6,7 +6,7 @@ Fashion MNIST dataset.
 ## Usage
 
 ```bash
-python3 run.py
+python3 main.py
 ```
 
 Use the `--help` option to list available arguments.
@@ -34,11 +34,11 @@ sudo apt-mark hold nvidia-384 libcuda-384
 
 ### 4. Build the image.
 
-The image includes PyTorch v0.3.0, CUDA 9.0, and CuDNN 7. It requires nvidia
+The image includes the latest PyTorch, CUDA 9.0, and CuDNN 7. It requires nvidia
 driver >=384 on the host.
 
 ```bash
-sudo docker build -t pytorch:v0.3.0 pytorch-v0.3.0
+sudo docker build -t pytorch .
 ```
 
 ### 5. Run the container.
@@ -47,5 +47,5 @@ sudo docker build -t pytorch:v0.3.0 pytorch-v0.3.0
 sudo docker run --rm --runtime nvidia --ipc host --pid host -dit \
 -v $(pwd):/root --restart unless-stopped \
 -h $(hostname)-pytorch --name $(hostname)-pytorch \
-pytorch:v0.3.0 bash -c 'pip install -r requirements.txt && python3 run.py'
+pytorch bash -c 'pip install -r requirements.txt && python3 main.py'
 ```
