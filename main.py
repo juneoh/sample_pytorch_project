@@ -24,7 +24,7 @@ def get_args():
     """
     parser = argparse.ArgumentParser(description=__doc__)
 
-    parser.add_argument('--batch_size', type=int, default=256,
+    parser.add_argument('--batch_size', type=int, default=64,
                         help='The batch size to load the data. (default: 64)')
     parser.add_argument('--num_workers', type=int, default=4,
                         help=('The number of worker processes to use in '
@@ -36,8 +36,10 @@ def get_args():
                         help='The learning rate for SGD. (default: 0.1)')
     parser.add_argument('--momentum', type=float, default=0.9,
                         help='The momentum for SGD. (default: 0.9)')
-    parser.add_argument('--checkpoint_file',
+    parser.add_argument('--checkpoint',
                         help='The path of the checkpoint file to load')
+    parser.add_argument('--cuda', default=False, action='store_true',
+                        help='Use GPU if available.')
 
     args = parser.parse_args(sys.argv[1:])
 
@@ -100,10 +102,10 @@ def get_data(batch_size, num_workers):
                              transform=transform)
 
     # Split training and validation data.
-    len_train = int(len(dataset) * 0.8)
-    len_val = len(dataset) - len_train
+    len_train = int(len(data) * 0.8)
+    len_val = len(data) - len_train
     data_train, data_val = torch.utils.data.random_split(
-        dataset, [len_train, len_val])
+        data, [len_train, len_val])
 
     # Wrap datasets with loaders.
     data_train = torch.utils.data.DataLoader(
@@ -168,7 +170,7 @@ def train(model, loss_function, optimizer, data):
                              leave=False)
 
     # Loop through training batches.
-    for inputs, targets in enumerate(data):
+    for inputs, targets in data:
 
         # Reset gradients.
         optimizer.zero_grad()
@@ -189,10 +191,10 @@ def train(model, loss_function, optimizer, data):
         # Update progress bar.
         progress_bar.update(1)
         progress_bar.set_description(
-            '[train] batch loss: {loss:.3f}'.format(loss=loss[0]))
+            '[train] batch loss: {loss:.3f}'.format(loss=loss.item()))
 
         # Accumulate loss sum.
-        loss_sum += loss[0]
+        loss_sum += loss.item()
 
     # Close progress bar.
     progress_bar.close()
@@ -222,7 +224,7 @@ def evaluate(model, data):
                              leave=False)
 
     # Loop through validation batches.
-    for inputs, targets in enumerate(data):
+    for inputs, targets in data:
 
         # Feed forward.
         with torch.set_grad_enabled(False):
@@ -251,6 +253,8 @@ def evaluate(model, data):
 
 
 def main():
+    """Provide the main entrypoint.
+    """
     # Fix random seed.
     torch.manual_seed(0)
 
@@ -263,8 +267,13 @@ def main():
     # Make preparations.
     args = get_args()
     logger = get_logger()
-    data_train, data_val, data_test = get_data()
+    data_train, data_val, data_test = get_data(args.batch_size,
+                                               args.num_workers)
     model = get_model()
+
+    # Send the model to the GPU, if enabled and available.
+    if args.cuda:
+        model = model.cuda()
 
     # Create the loss function and optimizer.
     loss_function = torch.nn.CrossEntropyLoss()
@@ -283,7 +292,7 @@ def main():
         logging.info(f'Epoch {epoch}:')
         train(model, loss_function, optimizer, data_train)
         evaluate(model, data_val)
-        torch.save(os.path.join('checkpoints', f'{epoch}.pth').
+        torch.save(os.path.join('checkpoints', f'{epoch}.pth'),
                    [model.state_dict(), optimizer.state_dict()])
 
     # Run final evaluation on the test data.
