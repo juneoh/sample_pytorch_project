@@ -175,6 +175,11 @@ def train(model, loss_function, optimizer, data):
         # Reset gradients.
         optimizer.zero_grad()
 
+        # Send data to GPU if CUDA is enabled.
+        if next(model.parameters()).is_cuda:
+            inputs = inputs.cuda()
+            targets = targets.cuda()
+
         # Feed forward.
         with torch.set_grad_enabled(True):
             outputs = model(inputs)
@@ -229,6 +234,11 @@ def evaluate(model, data):
         # Feed forward.
         with torch.set_grad_enabled(False):
             outputs = model(inputs)
+
+        # Send data to GPU if CUDA is enabled.
+        if next(model.parameters()).is_cuda:
+            inputs = inputs.cuda()
+            targets = targets.cuda()
 
         # Choose the class with maximum probability.
         _, predictions = torch.max(outputs, 1)
