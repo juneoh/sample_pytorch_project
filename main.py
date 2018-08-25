@@ -231,14 +231,14 @@ def evaluate(model, data):
     # Loop through validation batches.
     for inputs, targets in data:
 
-        # Feed forward.
-        with torch.set_grad_enabled(False):
-            outputs = model(inputs)
-
         # Send data to GPU if CUDA is enabled.
         if next(model.parameters()).is_cuda:
             inputs = inputs.cuda()
             targets = targets.cuda()
+
+        # Feed forward.
+        with torch.set_grad_enabled(False):
+            outputs = model(inputs)
 
         # Choose the class with maximum probability.
         _, predictions = torch.max(outputs, 1)
