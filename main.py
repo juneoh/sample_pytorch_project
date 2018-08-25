@@ -43,8 +43,6 @@ def get_args():
 
     args = parser.parse_args(sys.argv[1:])
 
-    logging.info(' '.join(sys.argv))
-
     return args
 
 
@@ -147,6 +145,22 @@ def get_model():
     return model
 
 
+def load_checkpoint(checkpoint, model, optimizer=None):
+    """Load state from the given checkpoint file.
+
+    Args:
+        checkpoint (str): The path of the checkpoint file.
+        model (torch.nn.Module): The model to load state.
+        optimizer (torch.optim.Optimizer, optional): The optimizer to load
+               state.
+    """
+    model_state_dict, optimizer_state_dict = torch.load(checkpoint)
+    model.load_state_dict(model_state_dict)
+
+    if optimizer is not None:
+        optimizer.load_state_dict(optimizer_state_dict)
+
+
 def train(model, loss_function, optimizer, data):
     """Train the model on the given data.
 
@@ -157,6 +171,9 @@ def train(model, loss_function, optimizer, data):
         optimizer (torch.optim.Optimizer): The optimizer algorithm to train the
             model.
         data (torch.utils.data.DataLoader): The data to train on.
+
+    Returns:
+        (float): The mean batch loss.
     """
     loss_sum = 0
 
@@ -204,9 +221,7 @@ def train(model, loss_function, optimizer, data):
     # Close progress bar.
     progress_bar.close()
 
-    # Log results.
-    mean_loss = loss_sum / len(data)
-    logging.info(f'[train] mean loss: {mean_loss:.3f}')
+    return loss_sum / len(data)
 
 
 def evaluate(model, data):
@@ -215,6 +230,9 @@ def evaluate(model, data):
     Args:
         model (torch.nn.Module): A PyTorch model.
         data (torch.utils.data.DataLoader): The data to train on.
+
+    Returns:
+        (float): The overall accuracy.
     """
     n_targets = 0
     n_correct_predictions = 0
@@ -243,8 +261,7 @@ def evaluate(model, data):
         # Choose the class with maximum probability.
         _, predictions = torch.max(outputs, 1)
 
-        # Update progress bar.
-        accuracy = (predictions == targets).sum() / len(targets)
+        accuracy = (predictions == targets).sum().item() / len(targets)
         progress_bar.update(1)
         progress_bar.set_description(
             '[evaluate] batch accuracy: {accuracy:.3f}'.format(
@@ -252,14 +269,12 @@ def evaluate(model, data):
 
         # Accumulate targets and correct predictions count.
         n_targets += len(targets)
-        n_correct_predictions += (predictions == targets).sum()
+        n_correct_predictions += (predictions == targets).sum().item()
 
     # Close progress bar.
     progress_bar.close()
 
-    # Log results.
-    accuracy = n_correct_predictions / n_targets
-    logging.info(f'[evaluate] accuracy: {accuracy:.3f}')
+    return n_correct_predictions / n_targets
 
 
 def main():
@@ -281,6 +296,10 @@ def main():
                                                args.num_workers)
     model = get_model()
 
+    # Log command arguments.
+    logger.info(' '.join(sys.argv))
+    logger.info(vars(args))
+
     # Send the model to the GPU, if enabled and available.
     if args.cuda:
         model = model.cuda()
@@ -293,21 +312,25 @@ def main():
 
     # Load checkpoint, if given.
     if args.checkpoint:
-        model_state_dict, optimizer_state_dict = torch.load(args.checkpoint)
-        model.load_state_dict(model_state_dict)
-        optimizer.load_state_dict(optimizer_state_dict)
+        load_checkpoint(args.checkpoint, model, optimizer)
 
     # Loop epochs.
     for epoch in range(args.num_epochs):
-        logging.info(f'Epoch {epoch}:')
-        train(model, loss_function, optimizer, data_train)
-        evaluate(model, data_val)
-        torch.save(os.path.join('checkpoints', f'{epoch}.pth'),
-                   [model.state_dict(), optimizer.state_dict()])
+        logger.info(f'Epoch {epoch}:')
+
+        mean_loss = train(model, loss_function, optimizer, data_train)
+        logger.info(f'  - [training] mean loss: {mean_loss:.3f}')
+
+        accuracy = evaluate(model, data_val)
+        logger.info(f'  - [validation] accuracy: {accuracy:.3f}')
+
+        torch.save([model.state_dict(), optimizer.state_dict()],
+                   os.path.join('checkpoints', f'{epoch}.pth'))
 
     # Run final evaluation on the test data.
-    logging.info('Test:')
-    evaluate(model, data_test)
+    logger.info('Test:')
+    accuracy = evaluate(model, data_test)
+    logger.info(f'  - [test] accuracy: {accuracy:.3f}')
 
 
 if __name__ == '__main__':
