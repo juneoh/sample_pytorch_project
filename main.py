@@ -189,6 +189,11 @@ def train(model, loss_function, optimizer, data):
     # Loop through training batches.
     for inputs, targets in data:
 
+        binary_targets = torch.FloatTensor(targets.size()).zero_()
+        for i in (4, 6, 7, 8):
+            binary_targets[targets == i] = 1
+        targets = binary_targets.view(-1, 1)
+
         # Reset gradients.
         optimizer.zero_grad()
 
@@ -249,6 +254,11 @@ def evaluate(model, data):
     # Loop through validation batches.
     for inputs, targets in data:
 
+        binary_targets = torch.FloatTensor(targets.size()).zero_()
+        for i in (4, 6, 7, 8):
+            binary_targets[targets == i] = 1
+        targets = binary_targets.view(-1, 1)
+
         # Send data to GPU if CUDA is enabled.
         if next(model.parameters()).is_cuda:
             inputs = inputs.cuda()
@@ -258,8 +268,7 @@ def evaluate(model, data):
         with torch.set_grad_enabled(False):
             outputs = model(inputs)
 
-        # Choose the class with maximum probability.
-        _, predictions = torch.max(outputs, 1)
+        predictions = (outputs.sigmoid() > 0.5).type(torch.cuda.FloatTensor)
 
         accuracy = (predictions == targets).sum().item() / len(targets)
         progress_bar.update(1)
@@ -296,6 +305,9 @@ def main():
                                                args.num_workers)
     model = get_model()
 
+    # For binary classification
+    model.fc = torch.nn.Linear(512, 1)
+
     # Log command arguments.
     logger.info(' '.join(sys.argv))
     logger.info(vars(args))
@@ -305,7 +317,7 @@ def main():
         model = model.cuda()
 
     # Create the loss function and optimizer.
-    loss_function = torch.nn.CrossEntropyLoss()
+    loss_function = torch.nn.BCEWithLogitsLoss()
     optimizer = torch.optim.SGD(model.parameters(),
                                 lr=args.learning_rate,
                                 momentum=args.momentum)
