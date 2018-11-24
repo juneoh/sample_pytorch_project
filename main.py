@@ -141,6 +141,7 @@ def get_model():
     model.conv1 = torch.nn.Conv2d(1, 64, kernel_size=3, stride=1, padding=1,
                                   bias=False)
     model.avgpool = torch.nn.AvgPool2d(2)
+    model.fc = torch.nn.Linear(in_features=512, out_features=10, bias=True)
 
     return model
 
